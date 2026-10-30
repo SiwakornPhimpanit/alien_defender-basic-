@@ -26,6 +26,8 @@ class Game:
         self.running = True
         self.state = 'menu'
         self.previous = 'menu'
+        self.pending_sounds = []
+        
         self.ship = 'Falcon'
         self.settings = {'music': 0.35, 'sfx': 0.6, 'difficulty': 'Normal'}
         try:
@@ -40,11 +42,17 @@ class Game:
             pass
         self.sounds = {}
         if pygame.mixer.get_init():
-            for name in ('shoot', 'explosion', 'hit'):
+            sound_files = {
+                'shoot': 'shoot.wav',
+                'explosion': 'Boom.wav',
+                'hit': 'hit.wav',
+            }
+            for name, filename in sound_files.items():
+                sound_path = ROOT / 'assets' / filename
                 try:
-                    self.sounds[name] = pygame.mixer.Sound(str(ROOT / 'assets' / (name + '.wav')))
-                except (pygame.error, OSError):
-                    pass
+                    self.sounds[name] = pygame.mixer.Sound(str(sound_path))
+                except (pygame.error, OSError) as error:
+                    print(f'Cannot load sound {sound_path}: {error}', file=sys.stderr)
             try:
                 pygame.mixer.music.load(str(ROOT / 'assets/music.wav'))
                 pygame.mixer.music.play(-1)
@@ -56,6 +64,23 @@ class Game:
         self.notice = ''
         self.notice_time = 0
         self.has_game = False
+
+    def play_sound_later(self, name, delay_seconds):
+        play_at = pygame.time.get_ticks() + round(delay_seconds * 1000)
+        self.pending_sounds.append((play_at, name))
+
+
+    def update_pending_sounds(self):
+        now = pygame.time.get_ticks()
+        waiting = []
+
+        for play_at, name in self.pending_sounds:
+            if now >= play_at:
+                self.sound(name)
+            else:
+                waiting.append((play_at, name))
+
+        self.pending_sounds = waiting
 
     def apply_audio(self):
         if pygame.mixer.get_init():
@@ -71,6 +96,7 @@ class Game:
         self.notice, self.notice_time = message, 4
 
     def start(self, data=None):
+        self.pending_sounds.clear()
         self.ship = data['ship'] if data else self.ship
         self.x, self.y = (data['x'], data['y']) if data else (480, 550)
         self.hp = data['hp'] if data else SHIPS[self.ship][1]
@@ -133,7 +159,7 @@ class Game:
 
     def update_play(self, dt):
         keys = pygame.key.get_pressed()
-        dx = int(keys[pygame.K_d] or keys[pygame.K_RIGHT])-int(keys[pygame.K_a] or keys[pygame.K_LEFT])
+        dx = -int(keys[pygame.K_d] or keys[pygame.K_RIGHT]) + int(keys[pygame.K_a] or keys[pygame.K_LEFT])
         dy = int(keys[pygame.K_s] or keys[pygame.K_DOWN])-int(keys[pygame.K_w] or keys[pygame.K_UP])
         length = max(1, math.hypot(dx, dy))
         speed, _, delay = SHIPS[self.ship]
@@ -168,7 +194,10 @@ class Game:
                         self.aliens.remove(alien)
                         self.score += 100
                         self.burst(alien['x'], alien['y'], (115, 255, 156))
+                        
                         self.sound('explosion')
+                        self.play_sound_later('explosion', 0.2)
+                        
                     break
         for bullet in self.enemy_bullets[:]:
             bullet[1] += (210 + self.wave * 9) * factor * dt
@@ -319,6 +348,7 @@ class Game:
                 star[1] = (star[1]+star[2]*dt) % HEIGHT
             self.notice_time = max(0, self.notice_time-dt)
             if self.state == 'play': self.update_play(dt)
+            self.update_pending_sounds()
             self.draw()
             pygame.display.flip()
             frames += 1
